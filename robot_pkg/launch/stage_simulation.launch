@@ -1,0 +1,10 @@
+<launch>
+  <node pkg="stage_ros" type="stageros" name="stageros" args="$(find robot_pkg)/worlds/my_world.world" output="screen">
+    <param name="base_watchdog_timeout" value="0.2"/>
+    <remap from="odom" to="robot0/odom"/>
+    <remap from="cmd_vel" to="robot0/cmd_vel"/>
+  </node>
+  
+  <node pkg="robot_pkg" type="robot_node" name="robot_node" output="screen">
+  </node>
+</launch>

@@ -1,0 +1,61 @@
+define block model
+(
+  size [0.5 0.5 0.5]
+  gui_nose 0
+)
+
+define robot position
+(
+  size [0.35 0.35 0.25]
+  drive "diff"
+  color "red"
+  gui_nose 1
+  odom_error [0.03 0.03 0.00 0.05]
+  localization "odom"
+  localization_origin [0 0 0 0]
+  
+  ranger(
+    sensor(
+      range [0.0 5.0]
+      fov 270.0
+      samples 270
+    )
+    color "black"
+    size [0.05 0.05 0.05]
+  )
+)
+
+define floorplan model
+(
+  color "gray30"
+  boundary 1
+  gui_nose 0
+  gui_grid 0
+  gui_move 0
+  obstacle_return 1
+)
+
+resolution 0.02
+interval_sim 100  # simulation timestep in milliseconds
+
+window
+( 
+  size [ 600.000 700.000 ] 
+  center [ 0 0 ] 
+  rotate [ 0 0 ]
+  scale 60 
+)
+
+floorplan
+( 
+  name "my_map"
+  bitmap "my_map.png"
+  size [10 10 0.5]
+  pose [ 0 0 0 0 ]
+)
+
+robot
+(
+  pose [ 0 0 0 0 ]  # Posizione iniziale al centro della mappa
+  name "robot0"
+)
