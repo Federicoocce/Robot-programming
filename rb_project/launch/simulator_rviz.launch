@@ -1,18 +1,13 @@
 <launch>
-  <!-- Load ROS parameters -->
-  <param name="use_sim_time" value="true"/>
+  <!-- Set parameters for the simulator -->
+  <arg name="map_file" default="/home/lattinone/catkin_ws/your_workspace/src/rb_project/maps/cappero_laser_odom_diag_2020-05-06-16-26.png"/>
+  <arg name="resolution" default="0.1"/>
 
   <!-- Launch the simulator node -->
-  <node name="simulator" pkg="rb_project" type="simulator" output="screen">
-    <param name="map_file" value="$(find rb_project)/maps/maze_enviroment2.pgm"/>
-    <param name="resolution" value="0.5"/>
+  <node name="simulator" pkg="rb_project" type="simulator" output="screen"
+        args="$(arg map_file) $(arg resolution)">
   </node>
 
-  <!-- Launch RViz with custom configuration -->
+  <!-- Launch RViz with the specified configuration -->
   <node name="rviz" pkg="rviz" type="rviz" args="-d $(find rb_project)/config/robot_sim.rviz"/>
-
-  <!-- Static transform publisher for map to odom -->
-  <node pkg="tf" type="static_transform_publisher" name="map_to_odom" 
-    args="0 0 0 0 0 0 map odom 100" />
-
 </launch>

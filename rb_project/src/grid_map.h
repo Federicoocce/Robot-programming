@@ -25,7 +25,7 @@ struct GridMap: public Grid_<uint8_t>{
     _g2w.translation() = grid_origin;
     _g2w.linear() <<
       res, 0,
-      0, -res;
+      0, res;
     _w2g = _g2w.inverse();
   }
   

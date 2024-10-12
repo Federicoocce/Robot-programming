@@ -10,12 +10,19 @@
 #include "laser_scanner.h"
 #include "world_item.h"
 #include <visualization_msgs/Marker.h>
+#include <tf2_ros/transform_broadcaster.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <sensor_msgs/LaserScan.h>
+
 
 using namespace std;
 
 // Global variables for robot velocity
-float tvel = 0;  // Translational velocity
+float tvel = 1;  // Translational velocity
 float rvel = 0;  // Rotational velocity
+Eigen::Vector2f flipY(const Eigen::Vector2f& p, int height) {
+    return Eigen::Vector2f(p.x(), height - 1 - p.y());
+}
 
 Eigen::Vector2f adjustedWorld2Grid(const GridMap& grid_map, const Eigen::Vector2f& world_pos) {
     Eigen::Vector2f grid_origin = grid_map.origin();
@@ -33,48 +40,45 @@ void velocityCallback(const geometry_msgs::Twist::ConstPtr& msg) {
     ROS_INFO("Received velocity command: linear=%f, angular=%f", tvel, rvel);
 }
 
+
+
 void publishOdometry(ros::Publisher &odom_pub, const Eigen::Isometry2f& robot_pose, float tvel, float rvel) {
-    static tf::TransformBroadcaster odom_broadcaster;
+    static tf2_ros::TransformBroadcaster tf_broadcaster;
     ros::Time current_time = ros::Time::now();
 
-    // Create quaternion from yaw for odometry
-    float yaw = atan2(robot_pose.rotation()(1,0), robot_pose.rotation()(0,0));
-    geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(yaw);
-    
-    // Publish static transform: map -> odom
-    geometry_msgs::TransformStamped map_to_odom_trans;
-    map_to_odom_trans.header.stamp = current_time;
-    map_to_odom_trans.header.frame_id = "map";
-    map_to_odom_trans.child_frame_id = "odom";
-    map_to_odom_trans.transform.translation.x = 0;
-    map_to_odom_trans.transform.translation.y = 0;
-    map_to_odom_trans.transform.translation.z = 0;
-    map_to_odom_trans.transform.rotation.w = 1;
-    odom_broadcaster.sendTransform(map_to_odom_trans);
-    ROS_INFO("Published transform: map -> odom");
+    // Trasformazione diretta: map -> base_link
+    geometry_msgs::TransformStamped transform_stamped;
+    transform_stamped.header.stamp = current_time;
+    transform_stamped.header.frame_id = "map";
+    transform_stamped.child_frame_id = "base_link";
+    transform_stamped.transform.translation.x = robot_pose.translation().x();
+    transform_stamped.transform.translation.y = robot_pose.translation().y();
+    transform_stamped.transform.translation.z = 0.0;
 
-    // Publish dynamic transform: odom -> base_link
-    geometry_msgs::TransformStamped odom_trans;
-    odom_trans.header.stamp = current_time;
-    odom_trans.header.frame_id = "odom";
-    odom_trans.child_frame_id = "base_link";
-    odom_trans.transform.translation.x = robot_pose.translation().x();
-    odom_trans.transform.translation.y = robot_pose.translation().y();
-    odom_trans.transform.translation.z = 0.0;
-    odom_trans.transform.rotation = odom_quat;
-    odom_broadcaster.sendTransform(odom_trans);
-    ROS_INFO("Published transform: odom -> base_link (x=%f, y=%f)", robot_pose.translation().x(), robot_pose.translation().y());
+    float yaw = atan2(robot_pose.rotation()(1, 0), robot_pose.rotation()(0, 0));
+    tf2::Quaternion q;
+    q.setRPY(0, 0, yaw);
+    transform_stamped.transform.rotation.x = q.x();
+    transform_stamped.transform.rotation.y = q.y();
+    transform_stamped.transform.rotation.z = q.z();
+    transform_stamped.transform.rotation.w = q.w();
 
-    // Publish odometry message
+    tf_broadcaster.sendTransform(transform_stamped);
+    ROS_INFO("Published transform: map -> base_link (x=%f, y=%f)", robot_pose.translation().x(), robot_pose.translation().y());
+
+    // Pubblicazione dell'odometria
     nav_msgs::Odometry odom;
     odom.header.stamp = current_time;
-    odom.header.frame_id = "odom";
+    odom.header.frame_id = "map"; // Cambiato da "odom" a "map"
     odom.child_frame_id = "base_link";
 
     odom.pose.pose.position.x = robot_pose.translation().x();
     odom.pose.pose.position.y = robot_pose.translation().y();
     odom.pose.pose.position.z = 0.0;
-    odom.pose.pose.orientation = odom_quat;
+    odom.pose.pose.orientation.x = q.x();
+    odom.pose.pose.orientation.y = q.y();
+    odom.pose.pose.orientation.z = q.z();
+    odom.pose.pose.orientation.w = q.w();
 
     odom.twist.twist.linear.x = tvel;
     odom.twist.twist.angular.z = rvel;
@@ -82,23 +86,62 @@ void publishOdometry(ros::Publisher &odom_pub, const Eigen::Isometry2f& robot_po
     odom_pub.publish(odom);
     ROS_INFO("Published odometry message");
 }
+
 nav_msgs::OccupancyGrid gridMapToOccupancyGrid(const GridMap& grid_map) {
-    nav_msgs::OccupancyGrid og;
-    og.header.frame_id = "map";
-    og.header.stamp = ros::Time::now();
-    og.info.resolution = grid_map.resolution();
-    og.info.width = grid_map.cols;
-    og.info.height = grid_map.rows;
-    og.info.origin.position.x = grid_map.origin().x();
-    og.info.origin.position.y = grid_map.origin().y();
-    og.info.origin.orientation.w = 1.0;
+      // MAP MESSAGE
+    nav_msgs::OccupancyGrid map_msg;                 // Create a message of type OccupancyGrid
+    map_msg.header.stamp = ros::Time::now();         // Set the timestamp of the map messagee
+    map_msg.header.frame_id = "map";                 // Set the FRAME_ID of the map message
+    map_msg.info.resolution = grid_map.resolution(); // Set the resolution of the map from the GridMap instance
+    map_msg.info.width = grid_map.cols;              // Set the width of the map from the GridMap instance
+    map_msg.info.height = grid_map.rows;           // Set the height of the map from the GridMap instance
+    map_msg.info.origin.position.x = grid_map.origin().x();
+    map_msg.info.origin.position.y = grid_map.origin().y();
+    map_msg.info.origin.position.z = 0.0;
 
-    og.data.resize(grid_map.cols * grid_map.rows);
-    for (int i = 0; i < grid_map.cols * grid_map.rows; ++i) {
-        og.data[i] = grid_map.cells[i] < 127 ? 100 : 0;
+    tf::Quaternion q;
+    q.setRPY(0, 0, 0); // Se l'orientazione è zero
+    map_msg.info.origin.orientation.x = q.x();
+    map_msg.info.origin.orientation.y = q.y();
+    map_msg.info.origin.orientation.z = q.z();
+    map_msg.info.origin.orientation.w = q.w();
+
+    // Populate the data of the map message
+    map_msg.data.resize(grid_map.rows * grid_map.cols);
+    for (int row = 0; row < grid_map.rows; ++row)
+    {
+        for (int col = 0; col < grid_map.cols; ++col)
+        {
+            int flipped_row = grid_map.rows - 1 - row;
+            uint8_t value = grid_map(flipped_row, col);
+            if (value < 127)
+            {
+                map_msg.data[row * grid_map.cols + col] = 100; // Occupied
+            }
+            else
+            {
+                map_msg.data[row * grid_map.cols + col] = 0; // Free
+            }
+        }
     }
+    return map_msg;
+}
 
-    return og;
+sensor_msgs::LaserScan convertToROSLaserScan(const LaserScan& laser_scan) {
+    sensor_msgs::LaserScan ros_scan;
+    ros_scan.header.stamp = ros::Time::now();
+    ros_scan.header.frame_id = "base_laser";
+    ros_scan.angle_min = laser_scan.angle_min;
+    ros_scan.angle_max = laser_scan.angle_max;
+    ros_scan.angle_increment = (laser_scan.angle_max - laser_scan.angle_min) / (laser_scan.ranges_num - 1);
+    ros_scan.time_increment = 0;
+    ros_scan.scan_time = 0.1;
+    ros_scan.range_min = laser_scan.range_min;
+    ros_scan.range_max = laser_scan.range_max;
+    ros_scan.ranges = laser_scan.ranges;
+
+    ros_scan.intensities.clear();
+    return ros_scan;
 }
 
 
@@ -116,6 +159,8 @@ int main(int argc, char** argv) {
 
     // Publisher for odometry
     ros::Publisher odom_pub = nh.advertise<nav_msgs::Odometry>("odom", 50);
+    //pub for laser
+    ros::Publisher laser_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 50);
     // New publisher for the map
     ros::Publisher map_pub = nh.advertise<nav_msgs::OccupancyGrid>("map", 1, true);
 
@@ -134,12 +179,9 @@ int main(int argc, char** argv) {
     // Load the map
     GridMap grid_map(0, 0, 0.1);
     grid_map.loadFromImage(filename, resolution);
-    Canvas canvas;
-    Eigen::Vector2f center = grid_map.grid2world(grid_map.origin());
-    cerr << "center: " << center.transpose() << endl;
-    cerr << "origin: " << grid_map.origin().transpose() << endl;
-
-    grid_map.draw(canvas);
+    // Print debug information about the loaded map
+    ROS_INFO("Map loaded. Size: %dx%d, Resolution: %f", grid_map.cols, grid_map.rows, grid_map.resolution());
+    ROS_INFO("Map origin: (%f, %f)", grid_map.origin().x(), grid_map.origin().y());
 
     // Initialize world and robot
     WorldItem* items[100];
@@ -149,9 +191,9 @@ int main(int argc, char** argv) {
     items[0] = &world_object;
 
     Eigen::Isometry2f robot_in_world = Eigen::Isometry2f::Identity();
-    robot_in_world.translation() << 2.5,2.5;
+    robot_in_world.translation() << 10,50;
     UnicyclePlatform robot(world_object, robot_in_world);
-    robot.radius = 0.001;
+    robot.radius = 1;
     robot.tvel = 0;
     robot.rvel = 0;
     items[1] = &robot;
@@ -161,7 +203,7 @@ int main(int argc, char** argv) {
     Eigen::Isometry2f scanner_in_robot = Eigen::Isometry2f::Identity();
     scanner_in_robot.translation().x() = 1;
     LaserScanner scanner(scan, robot, scanner_in_robot, 10);
-    scanner.radius = 0.05;
+    scanner.radius = 1;
     items[2] = &scanner;
     // Convert and publish the map once
     nav_msgs::OccupancyGrid og = gridMapToOccupancyGrid(grid_map);
@@ -187,19 +229,17 @@ int main(int argc, char** argv) {
                 robot_pose.translation().y(),
                 yaw);
         
-        // Convert world position to grid position
-        Eigen::Vector2f grid_pos = adjustedWorld2Grid(grid_map, robot_pose.translation());
-
-        // After calculating grid_pos, add this debug output
-        ROS_INFO("Grid map origin: x=%f, y=%f", grid_map.origin().x(), grid_map.origin().y());
-        ROS_INFO("Grid map resolution: %f", grid_map.resolution());
-        ROS_INFO("Robot position (grid): x=%f, y=%f", grid_pos.x(), grid_pos.y());
+        // Convert world position to grid position with flipped Y
+        Eigen::Vector2f grid_pos = grid_map.world2grid(robot_pose.translation());
+        grid_pos = flipY(grid_pos, grid_map.rows);
+        ROS_INFO("Robot position (grid, flipped): x=%f, y=%f", grid_pos.x(), grid_pos.y());
 
         // Check grid cell value at robot's position
         Eigen::Vector2i grid_pos_int = grid_pos.cast<int>();
         if (grid_map.inside(grid_pos_int)) {
             uint8_t cell_value = grid_map(grid_pos_int);
             ROS_INFO("Grid cell value at robot position: %d", cell_value);
+            ROS_INFO("Is cell occupied: %s", (cell_value < 127) ? "Yes" : "No");
         } else {
             ROS_WARN("Robot position is outside the grid map!");
         }
@@ -208,6 +248,31 @@ int main(int argc, char** argv) {
 
         // Publish odometry
         publishOdometry(odom_pub, robot_pose, tvel, rvel);
+        // Update laser scanner
+        scanner.tick(dt);  
+
+        // Publish laser scan data if a new scan is ready
+        if (scanner.scan_ready) {
+            sensor_msgs::LaserScan ros_scan = convertToROSLaserScan(scan);
+            laser_pub.publish(ros_scan);
+        }
+
+        // Publish laser scanner transform
+        static tf2_ros::TransformBroadcaster tf_broadcaster;
+        geometry_msgs::TransformStamped laser_transform;
+        laser_transform.header.stamp = ros::Time::now();
+        laser_transform.header.frame_id = "base_link";
+        laser_transform.child_frame_id = "base_laser";
+        laser_transform.transform.translation.x = scanner_in_robot.translation().x();
+        laser_transform.transform.translation.y = scanner_in_robot.translation().y();
+        laser_transform.transform.translation.z = 0.0;
+        tf2::Quaternion q;
+        q.setRPY(0, 0, 0);
+        laser_transform.transform.rotation.x = q.x();
+        laser_transform.transform.rotation.y = q.y();
+        laser_transform.transform.rotation.z = q.z();
+        laser_transform.transform.rotation.w = q.w();
+        tf_broadcaster.sendTransform(laser_transform);
 
         // Publish robot visualization marker
         visualization_msgs::Marker marker;
