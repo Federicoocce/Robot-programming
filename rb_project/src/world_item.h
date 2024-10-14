@@ -57,7 +57,6 @@ inline bool move(const Eigen::Isometry2f& iso) {
         pose_in_parent = restored_pose_in_parent;
         return false;
     }
-    ROS_INFO("Movement successful");
     return true;
 }
 

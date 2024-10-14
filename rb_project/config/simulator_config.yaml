@@ -1,0 +1,42 @@
+environment:
+  map: "cappero_laser_odom_diag_2020-05-06-16-26.png"
+  resolution: 0.1  
+
+robots:
+  - id: 1
+    frame_id: "robot1_frame"
+    radius: 0.2  # meters
+    start_position:
+      x: 10.0  # meters
+      y: 25.0  # meters
+      alpha: 0.785  # radians (approximately 45 degrees)
+    max_velocity:
+      linear: 1.0  # m/s
+      angular: 0.5  # rad/s
+    devices:
+      - type: lidar
+        frame_id: "lidar1_frame"
+        topic: "/robot1/scan"
+        beams: 180
+        range:
+          min: 0.0  # meters
+          max: 10.0  # meters
+
+  - id: 2
+    frame_id: "robot2_frame"
+    radius: 0.25  # meters
+    start_position:
+      x: 25.0  # meters
+      y: 27.0  # meters
+      alpha: 1.57  # radians (approximately 90 degrees)
+    max_velocity:
+      linear: 0.8  # m/s
+      angular: 0.4  # rad/s
+    devices:
+      - type: lidar
+        frame_id: "lidar2_frame"
+        topic: "/robot2/scan"
+        beams: 360
+        range:
+          min: 0.05  # meters
+          max: 15.0  # meters

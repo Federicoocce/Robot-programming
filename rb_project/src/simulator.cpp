@@ -13,12 +13,12 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <sensor_msgs/LaserScan.h>
-
+#include "config_parser.h"
 
 using namespace std;
 
 // Global variables for robot velocity
-float tvel = 1;  // Translational velocity
+float tvel = 0;  // Translational velocity
 float rvel = 0;  // Rotational velocity
 Eigen::Vector2f flipY(const Eigen::Vector2f& p, int height) {
     return Eigen::Vector2f(p.x(), height - 1 - p.y());
@@ -42,15 +42,15 @@ void velocityCallback(const geometry_msgs::Twist::ConstPtr& msg) {
 
 
 
-void publishOdometry(ros::Publisher &odom_pub, const Eigen::Isometry2f& robot_pose, float tvel, float rvel) {
+void publishOdometry(ros::Publisher &odom_pub, const Eigen::Isometry2f& robot_pose, float tvel, float rvel, const std::string& robot_frame_id) {
     static tf2_ros::TransformBroadcaster tf_broadcaster;
     ros::Time current_time = ros::Time::now();
 
-    // Trasformazione diretta: map -> base_link
+    // Transform: map -> robot_frame_id
     geometry_msgs::TransformStamped transform_stamped;
     transform_stamped.header.stamp = current_time;
     transform_stamped.header.frame_id = "map";
-    transform_stamped.child_frame_id = "base_link";
+    transform_stamped.child_frame_id = robot_frame_id;
     transform_stamped.transform.translation.x = robot_pose.translation().x();
     transform_stamped.transform.translation.y = robot_pose.translation().y();
     transform_stamped.transform.translation.z = 0.0;
@@ -64,13 +64,12 @@ void publishOdometry(ros::Publisher &odom_pub, const Eigen::Isometry2f& robot_po
     transform_stamped.transform.rotation.w = q.w();
 
     tf_broadcaster.sendTransform(transform_stamped);
-    ROS_INFO("Published transform: map -> base_link (x=%f, y=%f)", robot_pose.translation().x(), robot_pose.translation().y());
 
-    // Pubblicazione dell'odometria
+    // Publish odometry
     nav_msgs::Odometry odom;
     odom.header.stamp = current_time;
-    odom.header.frame_id = "map"; // Cambiato da "odom" a "map"
-    odom.child_frame_id = "base_link";
+    odom.header.frame_id = "map";
+    odom.child_frame_id = robot_frame_id;
 
     odom.pose.pose.position.x = robot_pose.translation().x();
     odom.pose.pose.position.y = robot_pose.translation().y();
@@ -84,9 +83,7 @@ void publishOdometry(ros::Publisher &odom_pub, const Eigen::Isometry2f& robot_po
     odom.twist.twist.angular.z = rvel;
 
     odom_pub.publish(odom);
-    ROS_INFO("Published odometry message");
 }
-
 nav_msgs::OccupancyGrid gridMapToOccupancyGrid(const GridMap& grid_map) {
       // MAP MESSAGE
     nav_msgs::OccupancyGrid map_msg;                 // Create a message of type OccupancyGrid
@@ -112,8 +109,7 @@ nav_msgs::OccupancyGrid gridMapToOccupancyGrid(const GridMap& grid_map) {
     {
         for (int col = 0; col < grid_map.cols; ++col)
         {
-            int flipped_row = grid_map.rows - 1 - row;
-            uint8_t value = grid_map(flipped_row, col);
+            uint8_t value = grid_map(row, col);
             if (value < 127)
             {
                 map_msg.data[row * grid_map.cols + col] = 100; // Occupied
@@ -124,6 +120,7 @@ nav_msgs::OccupancyGrid gridMapToOccupancyGrid(const GridMap& grid_map) {
             }
         }
     }
+
     return map_msg;
 }
 
@@ -143,157 +140,172 @@ sensor_msgs::LaserScan convertToROSLaserScan(const LaserScan& laser_scan) {
     ros_scan.intensities.clear();
     return ros_scan;
 }
+void publishLaserTransform(const std::string& robot_frame_id, const std::string& laser_frame_id, const Eigen::Isometry2f& laser_pose) {
+    static tf2_ros::TransformBroadcaster tf_broadcaster;
+    ros::Time current_time = ros::Time::now();
+
+    geometry_msgs::TransformStamped laser_transform;
+    laser_transform.header.stamp = current_time;
+    laser_transform.header.frame_id = robot_frame_id;
+    laser_transform.child_frame_id = laser_frame_id;
+    laser_transform.transform.translation.x = laser_pose.translation().x();
+    laser_transform.transform.translation.y = laser_pose.translation().y();
+    laser_transform.transform.translation.z = 0.0;
+
+    float yaw = atan2(laser_pose.rotation()(1, 0), laser_pose.rotation()(0, 0));
+    tf2::Quaternion q;
+    q.setRPY(0, 0, yaw);
+    laser_transform.transform.rotation.x = q.x();
+    laser_transform.transform.rotation.y = q.y();
+    laser_transform.transform.rotation.z = q.z();
+    laser_transform.transform.rotation.w = q.w();
+
+    tf_broadcaster.sendTransform(laser_transform);
+}
+
+void publishRobotMarker(ros::Publisher& marker_pub, const Eigen::Isometry2f& robot_pose, float radius, const std::string& robot_frame_id, int id) {
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = "map";
+    marker.header.stamp = ros::Time::now();
+    marker.ns = "robot";
+    marker.id = id;
+    marker.type = visualization_msgs::Marker::CYLINDER;
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.pose.position.x = robot_pose.translation().x();
+    marker.pose.position.y = robot_pose.translation().y();
+    marker.pose.position.z = 0;
+    
+    float yaw = atan2(robot_pose.rotation()(1, 0), robot_pose.rotation()(0, 0));
+    tf2::Quaternion q;
+    q.setRPY(0, 0, yaw);
+    marker.pose.orientation.x = q.x();
+    marker.pose.orientation.y = q.y();
+    marker.pose.orientation.z = q.z();
+    marker.pose.orientation.w = q.w();
+    
+    marker.scale.x = radius * 2;
+    marker.scale.y = radius * 2;
+    marker.scale.z = 0.25;
+    marker.color.r = 1.0;
+    marker.color.g = 0.0;
+    marker.color.b = 0.0;
+    marker.color.a = 1.0;
+    marker_pub.publish(marker);
+}
 
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        cout << "usage: " << argv[0] << " <image_file> <resolution>" << endl;
+        cout << "usage: " << argv[0] << " <config_file>" << endl;
         return -1;
     }
-    const char* filename = argv[1];
-    float resolution = atof(argv[2]);
+    const char* config_file = argv[1];
+
+    // Parse configuration
+    SimulatorConfig sim_config = parseConfig(config_file);
 
     // ROS node initialization
     ros::init(argc, argv, "robot_simulator");
     ros::NodeHandle nh;
 
-    // Publisher for odometry
-    ros::Publisher odom_pub = nh.advertise<nav_msgs::Odometry>("odom", 50);
-    //pub for laser
-    ros::Publisher laser_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 50);
-    // New publisher for the map
+    // Publishers and subscribers
+    std::vector<ros::Publisher> odom_pubs;
+    std::vector<ros::Publisher> laser_pubs;
+    std::vector<ros::Subscriber> vel_subs;
     ros::Publisher map_pub = nh.advertise<nav_msgs::OccupancyGrid>("map", 1, true);
-
-    // Subscriber for velocity commands
-    ros::Subscriber vel_sub = nh.subscribe("cmd_vel", 10, velocityCallback);
-
-    ros::Publisher marker_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 1);
+    ros::Publisher marker_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 10);
 
     // Set loop rate (e.g., 10 Hz)
     ros::Rate loop_rate(10);
 
-    cout << "Running " << argv[0] << " with arguments" << endl
-         << "-filename:" << argv[1] << endl
-         << "-resolution: " << argv[2] << endl;
-
     // Load the map
-    GridMap grid_map(0, 0, 0.1);
-    grid_map.loadFromImage(filename, resolution);
-    // Print debug information about the loaded map
+    GridMap grid_map(0, 0, sim_config.resolution);
+    grid_map.loadFromImage(sim_config.map_file.c_str(), sim_config.resolution);
     ROS_INFO("Map loaded. Size: %dx%d, Resolution: %f", grid_map.cols, grid_map.rows, grid_map.resolution());
-    ROS_INFO("Map origin: (%f, %f)", grid_map.origin().x(), grid_map.origin().y());
 
-    // Initialize world and robot
-    WorldItem* items[100];
-    memset(items, 0, sizeof(WorldItem*) * 100);
-
+    // Initialize world and robots
     World world_object(grid_map);
-    items[0] = &world_object;
+    std::vector<UnicyclePlatform*> robots;
+    std::vector<LaserScanner*> scanners;
 
-    Eigen::Isometry2f robot_in_world = Eigen::Isometry2f::Identity();
-    robot_in_world.translation() << 10,50;
-    UnicyclePlatform robot(world_object, robot_in_world);
-    robot.radius = 1;
-    robot.tvel = 0;
-    robot.rvel = 0;
-    items[1] = &robot;
+    for (const auto& robot_config : sim_config.robots) {
+        Eigen::Isometry2f robot_in_world = Eigen::Isometry2f::Identity();
+        robot_in_world.translation() << robot_config.start_x, robot_config.start_y;
+        robot_in_world.rotate(Eigen::Rotation2Df(robot_config.start_alpha));
 
-    // Initialize laser scanner
-    LaserScan scan;
-    Eigen::Isometry2f scanner_in_robot = Eigen::Isometry2f::Identity();
-    scanner_in_robot.translation().x() = 1;
-    LaserScanner scanner(scan, robot, scanner_in_robot, 10);
-    scanner.radius = 1;
-    items[2] = &scanner;
+        UnicyclePlatform *robot = new UnicyclePlatform(world_object, robot_in_world);
+        robot->radius = robot_config.radius;
+        // Add the robot to the vector of pointers to robots
+        robots.push_back(robot);
+
+        // Create publishers and subscribers for this robot
+        std::string odom_topic = "/robot" + std::to_string(robot_config.id) + "/odom";
+        odom_pubs.push_back(nh.advertise<nav_msgs::Odometry>(odom_topic, 50));
+
+        std::string cmd_vel_topic = "/robot" + std::to_string(robot_config.id) + "/cmd_vel";
+        vel_subs.push_back(nh.subscribe<geometry_msgs::Twist>(cmd_vel_topic, 10, 
+            [&robots, i = robots.size() - 1](const geometry_msgs::Twist::ConstPtr& msg) {
+                robots[i]->tvel = msg->linear.x;
+                robots[i]->rvel = msg->angular.z;
+            }));
+
+        // Initialize laser scanners for this robot
+        for (const auto& lidar_config : robot_config.lidars) {
+            LaserScan *scan = new LaserScan();
+            scan->angle_min = -M_PI;
+            scan->angle_max = M_PI;
+            scan->range_min = lidar_config.range_min;
+            scan->range_max = lidar_config.range_max;
+
+            Eigen::Isometry2f scanner_in_robot = Eigen::Isometry2f::Identity();
+            scanner_in_robot.translation().x() = 0; // Adjust as needed
+
+            LaserScanner *scanner = new LaserScanner(*scan, *robot, scanner_in_robot,10.0f);
+            scanners.push_back(scanner);
+            scanners.back() -> radius = 0.1; // Adjust as needed
+
+            laser_pubs.push_back(nh.advertise<sensor_msgs::LaserScan>(lidar_config.topic, 50));
+        }
+    }
+
     // Convert and publish the map once
     nav_msgs::OccupancyGrid og = gridMapToOccupancyGrid(grid_map);
     map_pub.publish(og);
 
-    int count = 0;
     while (ros::ok()) {
-        // Update robot velocities
-        robot.tvel = tvel;
-        robot.rvel = rvel;
-
-        // Update world (this will update robot position through UnicyclePlatform::tick)
+        // Update world
         float dt = 0.1;  // Time step (assuming 10Hz loop rate)
         world_object.tick(dt);
 
-        // Get updated robot pose
-        Eigen::Isometry2f robot_pose = robot.pose_in_parent;
-        float yaw = atan2(robot_pose.rotation()(1, 0), robot_pose.rotation()(0, 0));
+         for (size_t i = 0; i < robots.size(); ++i) {
+            auto& robot = robots[i];
+            auto& robot_config = sim_config.robots[i];
 
-        // Debug output
-        ROS_INFO("Robot position (world): x=%f, y=%f, theta=%f", 
-                robot_pose.translation().x(), 
-                robot_pose.translation().y(),
-                yaw);
-        
-        // Convert world position to grid position with flipped Y
-        Eigen::Vector2f grid_pos = grid_map.world2grid(robot_pose.translation());
-        grid_pos = flipY(grid_pos, grid_map.rows);
-        ROS_INFO("Robot position (grid, flipped): x=%f, y=%f", grid_pos.x(), grid_pos.y());
+            // Get updated robot pose
+            Eigen::Isometry2f robot_pose = robot->pose_in_parent;
 
-        // Check grid cell value at robot's position
-        Eigen::Vector2i grid_pos_int = grid_pos.cast<int>();
-        if (grid_map.inside(grid_pos_int)) {
-            uint8_t cell_value = grid_map(grid_pos_int);
-            ROS_INFO("Grid cell value at robot position: %d", cell_value);
-            ROS_INFO("Is cell occupied: %s", (cell_value < 127) ? "Yes" : "No");
-        } else {
-            ROS_WARN("Robot position is outside the grid map!");
+            // Publish odometry
+            publishOdometry(odom_pubs[i], robot_pose, robot->tvel, robot->rvel, robot_config.frame_id);
+
+            // Update and publish laser scans
+            for (size_t j = 0; j < robot_config.lidars.size(); ++j) {
+                auto& scanner = scanners[i * robot_config.lidars.size() + j];
+                auto& lidar_config = robot_config.lidars[j];
+
+                scanner->tick(dt);
+                if (scanner->scan_ready) {
+                    sensor_msgs::LaserScan ros_scan = convertToROSLaserScan(scanner->scan);
+                    ros_scan.header.frame_id = lidar_config.frame_id;
+                    laser_pubs[i * robot_config.lidars.size() + j].publish(ros_scan);
+                }
+
+                // Publish laser scanner transform
+                publishLaserTransform(robot_config.frame_id, lidar_config.frame_id, scanner->pose_in_parent);
+            }
+
+            // Publish robot visualization marker
+            publishRobotMarker(marker_pub, robot_pose, robot->radius, robot_config.frame_id, i);
         }
-
-        ROS_INFO("Robot velocities: linear=%f, angular=%f", robot.tvel, robot.rvel);
-
-        // Publish odometry
-        publishOdometry(odom_pub, robot_pose, tvel, rvel);
-        // Update laser scanner
-        scanner.tick(dt);  
-
-        // Publish laser scan data if a new scan is ready
-        if (scanner.scan_ready) {
-            sensor_msgs::LaserScan ros_scan = convertToROSLaserScan(scan);
-            laser_pub.publish(ros_scan);
-        }
-
-        // Publish laser scanner transform
-        static tf2_ros::TransformBroadcaster tf_broadcaster;
-        geometry_msgs::TransformStamped laser_transform;
-        laser_transform.header.stamp = ros::Time::now();
-        laser_transform.header.frame_id = "base_link";
-        laser_transform.child_frame_id = "base_laser";
-        laser_transform.transform.translation.x = scanner_in_robot.translation().x();
-        laser_transform.transform.translation.y = scanner_in_robot.translation().y();
-        laser_transform.transform.translation.z = 0.0;
-        tf2::Quaternion q;
-        q.setRPY(0, 0, 0);
-        laser_transform.transform.rotation.x = q.x();
-        laser_transform.transform.rotation.y = q.y();
-        laser_transform.transform.rotation.z = q.z();
-        laser_transform.transform.rotation.w = q.w();
-        tf_broadcaster.sendTransform(laser_transform);
-
-        // Publish robot visualization marker
-        visualization_msgs::Marker marker;
-        marker.header.frame_id = "map";  // Changed from "base_link" to "map"
-        marker.header.stamp = ros::Time::now();
-        marker.ns = "robot";
-        marker.id = 0;
-        marker.type = visualization_msgs::Marker::CYLINDER;
-        marker.action = visualization_msgs::Marker::ADD;
-        marker.pose.position.x = robot_pose.translation().x();
-        marker.pose.position.y = robot_pose.translation().y();
-        marker.pose.position.z = 0;
-        marker.pose.orientation = tf::createQuaternionMsgFromYaw(yaw);
-        marker.scale.x = 0.5;
-        marker.scale.y = 0.5;
-        marker.scale.z = 0.25;
-        marker.color.r = 1.0;
-        marker.color.g = 0.0;
-        marker.color.b = 0.0;
-        marker.color.a = 1.0;
-        marker_pub.publish(marker);
 
         // Handle ROS callbacks
         ros::spinOnce();

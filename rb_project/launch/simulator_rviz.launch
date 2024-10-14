@@ -1,11 +1,10 @@
 <launch>
-  <!-- Set parameters for the simulator -->
-  <arg name="map_file" default="/home/lattinone/catkin_ws/your_workspace/src/rb_project/maps/cappero_laser_odom_diag_2020-05-06-16-26.png"/>
-  <arg name="resolution" default="0.1"/>
+  <!-- Set path to the configuration file -->
+  <arg name="config_file" default="$(find rb_project)/config/simulator_config.yaml"/>
 
   <!-- Launch the simulator node -->
   <node name="simulator" pkg="rb_project" type="simulator" output="screen"
-        args="$(arg map_file) $(arg resolution)">
+        args="$(arg config_file)">
   </node>
 
   <!-- Launch RViz with the specified configuration -->
